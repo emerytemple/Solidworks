@@ -1,0 +1,159 @@
+Sub main()
+
+' Get unique file number
+fileNmb = FreeFile()
+
+' Open file
+Open FILE_NAME For Input As fileNmb
+
+' Read number of points
+Input #fileNmb, numPts
+
+' Adjust due to array index starting at 0
+numPts = numPts - 1
+
+' Resize multidimensional arrays
+ReDim fromPts(0 To numPts, 0 To 2)
+ReDim toPts(0 To numPts, 0 To 2)
+ReDim skPoint(0 To 2 * numPts, 0 To 2) ' maybe remove excess length later
+ReDim ptLen(0 To numPts)
+ReDim cylRadius(0 To numPts)
+
+' Read points from each line and populate arrays
+For i = 0 To numPts
+    Input #fileNmb, fromPts(i, 0), fromPts(i, 1), fromPts(i, 2)
+    Input #fileNmb, toPts(i, 0), toPts(i, 1), toPts(i, 2)
+    Input #fileNmb, cylRadius(i)
+Next i
+
+' Connect to currently active SolidWorks document
+Set swApp = Application.SldWorks
+Set Part = swApp.ActiveDoc
+
+' Insert new 3D sketch
+Part.SketchManager.Insert3DSketch True
+
+' Insert line segments
+' i is line number, j is current number of unique points, k is x/y/z coordinate
+j = 0
+msg = "" & vbCrLf
+For i = 0 To numPts
+    If i = 0 Then
+        ' Add both from and to points to sketch
+        For k = 0 To 2
+            skPoint(j, k) = fromPts(i, k)
+            skPoint(j + 1, k) = toPts(i, k)
+        Next k
+        j = j + 2
+    Else
+        ' see if fromPt in skPoint
+        myCount = 0
+        For m = 0 To j - 1
+            If fromPts(i, 0) = skPoint(m, 0) And _
+               fromPts(i, 1) = skPoint(m, 1) And _
+               fromPts(i, 2) = skPoint(m, 2) Then
+                myCount = myCount + 1
+            End If
+        Next m
+
+        ' MsgBox msg
+
+        ' Insert fromPt into skPoint list
+        If myCount = 0 Then
+            For k = 0 To 2
+                skPoint(j, k) = fromPts(i, k)
+            Next k
+            msg = msg & "skPt(" & CStr(j) & ") = " & CStr(skPoint(j, 0)) & " " & CStr(skPoint(j, 1)) & " " & CStr(skPoint(j, 2)) & vbCrLf
+            j = j + 1
+        End If
+
+        ' see if toPt in skPoint
+        myCount = 0
+        For m = 0 To j - 1
+            If toPts(i, 0) = skPoint(m, 0) And _
+               toPts(i, 1) = skPoint(m, 1) And _
+               toPts(i, 2) = skPoint(m, 2) Then
+                myCount = myCount + 1
+            End If
+        Next m
+
+        ' Insert toPt into skPoint list
+        If myCount = 0 Then
+            For k = 0 To 2
+                skPoint(j, k) = toPts(i, k)
+            Next k
+            msg = msg & "skPt(" & CStr(j) & ") = " & CStr(skPoint(j, 0)) & " " & CStr(skPoint(j, 1)) & " " & CStr(skPoint(j, 2)) & vbCrLf
+            j = j + 1
+        End If
+    End If
+
+    ' Find length of line segments
+    Val = 0
+    For k = 0 To 2
+        Val = Val + (toPts(i, k) - fromPts(i, k)) * (toPts(i, k) - fromPts(i, k))
+    Next k
+    ptLen(i) = Sqr(Val)
+
+    ' Insert line segments
+    Set skSegment = Part.SketchManager.CreateLine(fromPts(i, 0), fromPts(i, 1), fromPts(i, 2), toPts(i, 0), toPts(i, 1), toPts(i, 2))
+Next i
+
+' Remove excess length now
+numUniqPts = j
+
+' Exit from 3D sketch
+Part.SketchManager.Insert3DSketch True
+
+' Clear selected objects
+Part.ClearSelection2 True
+
+' Insert cylinder for each given line segment
+For i = 0 To numPts
+    ' Get skpoint index using from and to points
+    myCount = 0
+    For j = 0 To numUniqPts - 1
+        If fromPts(i, 0) = skPoint(j, 0) And _
+           fromPts(i, 1) = skPoint(j, 1) And _
+           fromPts(i, 2) = skPoint(j, 2) Then
+            myCount = j
+            Exit For
+        ElseIf toPts(i, 0) = skPoint(j, 0) And _
+               toPts(i, 1) = skPoint(j, 1) And _
+               toPts(i, 2) = skPoint(j, 2) Then
+            myCount = j
+            Exit For
+        End If
+    Next j
+
+    ' Select point
+    msg = "Line" & CStr(i + 1) & "@3DSketch1"
+    boolstatus = Part.Extension.SelectByID2(msg, "EXTSKETCHSEGMENT", 0.2572944687468, 0.2572944687468, 0, True, 0, Nothing, 0)
+    
+    ' Select line segment
+    msg = "Point" & CStr(myCount + 1) & "@3DSketch1"
+    boolstatus = Part.Extension.SelectByID2(msg, "EXTSKETCHPOINT", 0, 0, 0, True, 1, Nothing, 0)
+    
+    ' Create reference plane
+    Set myRefPlane = Part.FeatureManager.InsertRefPlane(2, 0, 4, 0, 0, 0)
+    
+    ' Clear selected objects
+    Part.ClearSelection2 True
+
+    ' Select correct plane
+    msg = "Plane" & CStr(i + 1)
+    boolstatus = Part.Extension.SelectByID2(msg, "PLANE", -0.489389457980934, 0.580384778899941, 0.872135657148704, False, 0, Nothing, 0)
+    
+    ' Insert new sketch on new reference plane
+    Part.SketchManager.InsertSketch True
+    
+    ' Create circle with desired radius
+    Set myCircle = Part.SketchManager.CreateCircle(0#, 0#, 0#, -cylRadius(i), -cylRadius(i), 0#)
+    
+    ' Exit sketch
+    Part.SketchManager.InsertSketch True
+    
+    ' Extrude cylinder
+    Set myFeature = Part.FeatureManager.FeatureExtrusion2(True, False, False, 0, 0, ptLen(i), ptLen(i), False, False, False, False, 0.26179938779915, 0.26179938779915, False, False, False, False, True, True, True, 0, 0, False)
+Next i
+
+End Sub
